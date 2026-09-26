@@ -244,6 +244,55 @@ Operational rules of thumb:
 - `elizaos-plugin-edge-tts`, `ovos-tts-plugin-edge-tts`.
 - `edge-tts-ext`, npm `edge-tts` (Node port, ~5-6 direct dependents).
 
+## Empirical verification (2026-09-27)
+
+Installed `edge-tts==7.2.8` into a throwaway `python3 -m venv` and ran
+the following against the live `speech.platform.bing.com` endpoint.
+All temp artifacts (`/tmp/edge-tts-venv`, `/tmp/edge-tts-test`) were
+deleted after testing — zero residue in system Python.
+
+| Test | Result |
+| --- | --- |
+| `--list-voices` | OK — 5.16 s, voices endpoint reachable, DRM token + clock-skew path works. |
+| Short text MP3 | OK — `MPEG ADTS, layer III, v2, 48 kbps, 24 kHz, Monaural` (matches hard-coded `audio-24khz-48kbitrate-mono-mp3`). |
+| Streaming + SRT (`SentenceBoundary`) | OK — 3 sentences, timestamps continuous (50ms → 1237ms → 2287ms → 4712ms). |
+| WordBoundary via `Communicate(boundary="WordBoundary")` | OK — 8 words with per-word offsets, sub_type correctly tracked. |
+| `--rate=-30% --pitch=-10Hz --volume=+20%` | OK — MP3 still CBR 48 kbps; prosody changes synthesis, not encoding. |
+| Chinese `zh-CN-YunjianNeural` | OK — sentence SRT continuous, MP3 48 kbps. |
+| **PR #468 CBR math** (bytes ↔ ffprobe duration) | OK — short text 2.088s, long text 60.264s, **0 ms diff, 0.000% error**. |
+
+### Bug surfaced by testing — SRT / MP3 are not deterministic across runs
+
+Ran the upstream regression shape (10 parallel `edge-tts -f` invocations
+of the same text):
+
+- All 10 produced valid SRT files with the same content.
+- All 10 SRT files differed byte-for-byte — sentence boundary offsets
+  drift ±50–100 ms between invocations.
+- MP3 files differ in size by up to 1,584 bytes (≈264 ms of audio)
+  between invocations of the same text.
+- Audio content itself is audibly identical (same voice, same text)
+  but the AI inserts variable inter-sentence silence that varies
+  per request.
+
+Implications:
+
+- The upstream `tests/001-long-text.sh` regression is **flaky** in
+  practice. If it passes locally, it's mostly luck (same network,
+  same token window, similar timing).
+- `SubMaker` is fine for one-shot subtitle generation. It is **not**
+  a stable artifact for caching, snapshot testing, or content
+  addressing.
+- For reproducible output, batch the same `Communicate` instance
+  and stick with one connection per text rather than 26 parallel
+  fan-outs.
+
+This is consistent with the analysis above — `SentenceBoundary`
+offsets come from MS-reported metadata, not from the deterministic
+CBR byte count. PR #468 fixed the long-text drift *within* a single
+stream; it did not (and cannot) make two separate streams agree
+byte-for-byte.
+
 ## Sources
 
 - https://github.com/rany2/edge-tts (repo metadata, issues, PRs, events)
@@ -257,3 +306,6 @@ Operational rules of thumb:
   `edge_playback/win32_playback.py`,
   `.github/workflows/{code-quality,codeql-analysis}.yml`,
   `tests/001-long-text.sh`, `setup.cfg`, `setup.py`, `LICENSE`.
+- **Live verification**: `pip install edge-tts==7.2.8` into
+  `/tmp/edge-tts-venv` (Python 3.14.7), tested against the live
+  endpoint on 2026-09-27, env deleted after testing.

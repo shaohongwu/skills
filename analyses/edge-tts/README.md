@@ -4,9 +4,25 @@ Reverse-engineered Python client for Microsoft Edge's "Read Aloud" TTS websocket
 
 - **Upstream:** <https://github.com/rany2/edge-tts>
 - **Analyzed release:** `7.2.8` (2026-03-22)
-- **Snapshot:** `sources/edge-tts/` — `git clone --depth=1 --branch=7.2.8`
+- **Snapshot:** `sources/edge-tts/` — full `git fetch --tags --unshallow` of upstream (314 commits, 12 tags, 4 branches), detached at `7.2.8`
+- **Off-repo backups** (in case upstream disappears):
+  - `sources/edge-tts.bundle` — 2.2 MB git bundle with `--all`, sha256 `0a1a0c8dba5b03d05bc4bf9ebbff0d6adab4e3112d2aca53590253c7febdb8c9`
+  - `sources/edge-tts-7.2.8.tar.gz` — 125 KB source tarball (no .git), sha256 `684f6ffa04bfa4f46505ff524090366b061fa3578b3b65cb941a1c9589b82221`
 - **Analysis:** `analysis.md`
 - **Analyzed:** 2026-09-27
+
+## Rebuild from backup
+
+If the live clone is broken and the upstream repo is gone:
+
+```bash
+# From git bundle (preserves full history + tags + branches)
+git clone /path/to/edge-tts.bundle restored/edge-tts
+cd restored/edge-tts && git checkout 7.2.8
+
+# From tarball (just the source tree, no history)
+mkdir restored/edge-tts && tar -xzf edge-tts-7.2.8.tar.gz -C restored/edge-tts
+```
 
 ## Files
 
