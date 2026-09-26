@@ -293,6 +293,121 @@ CBR byte count. PR #468 fixed the long-text drift *within* a single
 stream; it did not (and cannot) make two separate streams agree
 byte-for-byte.
 
+## Usage (validated 2026-09-27)
+
+After listening to eight live samples (Chinese Mandarin F/M, Chinese
+Hunan-na, English F/M, Cantonese F/M), the selected voice for our use
+case is **`zh-HK-HiuGaaiNeural`** — female, Cantonese (Hong Kong).
+Reasoning:
+
+- Native HK Cantonese pronunciation on traditional-Chinese text
+  (粤拼 tones preserved; "嘅"/"哋"/"唔"/"啲" read correctly, not
+  fallback-Mandarin).
+- Female, mid-pitch, conversational pace — fits narration /
+  explainer / YouTube voice-over.
+- Among the three `zh-HK-*` voices, HiuGaai outperformed HiuMaan
+  (faster, less natural) and WanLung (male, deeper) for our needs.
+
+### Operational recipe
+
+Run from a throwaway venv; never install `edge-tts` into the system
+Python. Output goes to a temp dir, deleted after the run.
+
+```bash
+# 1. isolate
+python3 -m venv /tmp/tts-venv
+/tmp/tts-venv/bin/pip install edge-tts==7.2.8
+
+# 2. generate (single file, no SRT)
+TEXT="今日天氣唔錯,我哋一齊去飲茶。"
+/tmp/tts-venv/bin/edge-tts \
+    --voice zh-HK-HiuGaaiNeural \
+    --text "$TEXT" \
+    --write-media /tmp/tts-out.mp3
+
+# 3. generate with SRT (for video subtitle track)
+/tmp/tts-venv/bin/edge-tts \
+    --voice zh-HK-HiuGaaiNeural \
+    --text "$TEXT" \
+    --write-media /tmp/tts-out.mp3 \
+    --write-subtitles /tmp/tts-out.srt
+
+# 4. tweak prosody — slower, slightly higher pitch, louder
+/tmp/tts-venv/bin/edge-tts \
+    --voice zh-HK-HiuGaaiNeural \
+    --rate=-15% --pitch=+5Hz --volume=+10% \
+    --text "$TEXT" \
+    --write-media /tmp/tts-out.mp3
+
+# 5. long text — let the 4096-byte splitter do its job; SRT stays
+#    monotonic for the duration of one stream (PR #468).
+#    But two separate invocations of the same text will produce
+#    byte-different outputs (see "Bug surfaced" above).
+
+# 6. cleanup
+rm -rf /tmp/tts-venv /tmp/tts-out.*
+```
+
+### Programmatic recipe (when wrapping into a script)
+
+```python
+import asyncio, edge_tts
+
+VOICE = "zh-HK-HiuGaaiNeural"
+
+async def synth(text: str, mp3_path: str, srt_path: str | None = None):
+    comm = edge_tts.Communicate(
+        text,
+        VOICE,
+        rate="-15%", pitch="+5Hz", volume="+10%",
+        boundary="SentenceBoundary",  # or "WordBoundary" for karaoke
+    )
+    sub = edge_tts.SubMaker()
+    audio = bytearray()
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            audio.extend(chunk["data"])
+        elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+            sub.feed(chunk)
+    with open(mp3_path, "wb") as f:
+        f.write(audio)
+    if srt_path:
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(sub.get_srt())
+
+asyncio.run(synth("今日天氣唔錯。", "/tmp/out.mp3", "/tmp/out.srt"))
+```
+
+### Voice catalog (validated from `VoicesManager.create()`)
+
+Total: **322 voices** across 130+ locales. The ones that mattered for
+our pick:
+
+| Voice | Locale | Gender | Why considered |
+| --- | --- | --- | --- |
+| `zh-CN-XiaoxiaoNeural` | zh-CN | F | Mandarin baseline — friendly/warm |
+| `zh-CN-YunjianNeural` | zh-CN | M | Mandarin — narrative/deep |
+| `zh-CN-XiaoyiNeural` | zh-CN | F | Mandarin — lively |
+| `zh-CN-liaoning-XiaobeiNeural` | zh-CN-liaoning | F | 东北话 Mandarin dialect — humorous |
+| `zh-CN-shaanxi-XiaoniNeural` | zh-CN-shaanxi | F | 陕西话 Mandarin dialect — bright |
+| `en-US-EmmaMultilingualNeural` | en-US | F | English default — multilingual |
+| `en-US-GuyNeural` | en-US | M | English — passionate |
+| `zh-HK-HiuGaaiNeural` | zh-HK | F | **Selected** — HK Cantonese |
+| `zh-HK-HiuMaanNeural` | zh-HK | F | HK Cantonese — alt, faster |
+| `zh-HK-WanLungNeural` | zh-HK | M | HK Cantonese — male |
+| `zh-TW-HsiaoChenNeural` | zh-TW | F | 台湾国语 — female |
+| `zh-TW-YunJheNeural` | zh-TW | M | 台湾国语 — male |
+
+**Notable absences** (not in the upstream voice list):
+
+- No Hunan / 湘语 / 湖南话 voice. Even at Azure TTS the Hunan dialect
+  isn't offered as a discrete voice — `zh-CN-liaoning` (东北) and
+  `zh-CN-shaanxi` (陕西) are the only Mandarin dialect voices.
+- No way to pick SSML `<mstts:express-as style="…">` via this client
+  (server rejects custom SSML beyond the single `<prosody>` envelope).
+- No voice cloning / fine-tuning API — this is a thin wrapper over a
+  fixed Azure voice catalog.
+
 ## Sources
 
 - https://github.com/rany2/edge-tts (repo metadata, issues, PRs, events)
